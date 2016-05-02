@@ -59,6 +59,8 @@ public final class EpoxyProcessor extends AbstractProcessor {
     private static final String TYPE_CLASS = "typeClass";
     private static final String JSON_ARRAY = "jsonArray";
     static final String FROM_JSON = "fromJson";
+    static final String TO_JSON = "toJson";
+    static final String MODEL = "model";
     static final String LIST_FROM_JSON = "listFromJson";
     static final String JSON_OBJECT = "jsonObject";
 
@@ -179,12 +181,8 @@ public final class EpoxyProcessor extends AbstractProcessor {
                 .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
                         .addAnnotation(NONNULL).build())
                 .addStatement("if ($L == null) return null", JSON)
-                .addStatement("$T $L = $L($L)", ParameterizedTypeName.get(EPOXY_JSON_BINDER, T), BINDER, GET_BINDER, TYPE_CLASS)
-                .beginControlFlow("if ($L == null)", BINDER)
-                .addStatement("throw new $T(\"Binder not found for type \" + $L)", JSON_EXCEPTION_CLASS, TYPE_CLASS)
-                .endControlFlow()
                 .addStatement("$T $L = new $T($L)", JSON_OBJECT_CLASS, JSON_OBJECT, JSON_OBJECT_CLASS, JSON)
-                .addStatement("return $L.$L($L)", BINDER, FROM_JSON, JSON_OBJECT)
+                .addStatement("return $L($L, $L)", FROM_JSON, JSON_OBJECT, TYPE_CLASS)
                 .returns(T)
                 .build());
 
@@ -205,6 +203,25 @@ public final class EpoxyProcessor extends AbstractProcessor {
                 .endControlFlow()
                 .addStatement("return $L.$L($L)", BINDER, FROM_JSON, JSON_OBJECT)
                 .returns(T)
+                .build());
+
+        // To JSONObject method
+        builder.addMethod(MethodSpec.methodBuilder(TO_JSON)
+                .addAnnotation(NULLABLE)
+                .addModifiers(PUBLIC, STATIC)
+                .addTypeVariable(T)
+                .addException(IOException.class)
+                .addException(JSON_EXCEPTION_CLASS)
+                .addParameter(ParameterSpec.builder(T, MODEL).addAnnotation(NULLABLE).build())
+                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
+                        .addAnnotation(NONNULL).build())
+                .addStatement("if ($L == null) return null", MODEL)
+                .addStatement("$T $L = $L($L)", ParameterizedTypeName.get(EPOXY_JSON_BINDER, T), BINDER, GET_BINDER, TYPE_CLASS)
+                .beginControlFlow("if ($L == null)", BINDER)
+                .addStatement("throw new $T(\"Binder not found for type \" + $L)", JSON_EXCEPTION_CLASS, TYPE_CLASS)
+                .endControlFlow()
+                .addStatement("return $L.$L($L)", BINDER, TO_JSON, MODEL)
+                .returns(JSON_OBJECT_CLASS)
                 .build());
 
         // From JSONArray method
@@ -289,10 +306,9 @@ public final class EpoxyProcessor extends AbstractProcessor {
                 .superclass(binding.getSuperClassName());
 
         builder.addMethod(binding.createFromJsonMethod())
-                .addMethod(binding.createParseJsonMethod());
-
-        // TODO: Write object back to JSON
-//                .addMethod(binding.createToJsonMethod());
+                .addMethod(binding.createParseJsonMethod())
+                .addMethod(binding.createToJsonMethod())
+                .addMethod(binding.createParseModelMethod());
 
         return JavaFile.builder(binding.packageName, builder.build())
                 .indent("    ")

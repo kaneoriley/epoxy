@@ -24,6 +24,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.lang.reflect.Array;
 
 @SuppressWarnings({"WeakerAccess", "unused"})
 public abstract class EpoxyJsonBinder<T> {
@@ -33,6 +34,13 @@ public abstract class EpoxyJsonBinder<T> {
 
     @CallSuper
     protected void parseJson(@NonNull T t, @NonNull JSONObject jsonObject) throws IOException, JSONException {
+    }
+
+    @Nullable
+    protected abstract JSONObject toJson(@NonNull T t) throws IOException, JSONException;
+
+    @CallSuper
+    public void parseModel(@NonNull JSONObject jsonObject, @NonNull T model) throws IOException, JSONException {
     }
 
     protected static boolean parseBoolean(@NonNull JSONObject jsonObject,
@@ -204,6 +212,41 @@ public abstract class EpoxyJsonBinder<T> {
         return array;
     }
 
+    protected static void putBoolean(@NonNull JSONObject jsonObject,
+                                     @NonNull String name,
+                                     boolean value) throws JSONException {
+        jsonObject.put(name, value);
+    }
+
+    protected static void putInteger(@NonNull JSONObject jsonObject,
+                                     @NonNull String name,
+                                     int value) throws JSONException {
+        jsonObject.put(name, value);
+    }
+
+    protected static void putLong(@NonNull JSONObject jsonObject,
+                                  @NonNull String name,
+                                  long value) throws JSONException {
+        jsonObject.put(name, value);
+    }
+
+    protected static void putDouble(@NonNull JSONObject jsonObject,
+                                    @NonNull String name,
+                                    double value) throws JSONException {
+        jsonObject.put(name, value);
+    }
+
+    protected static void putObject(@NonNull JSONObject jsonObject,
+                                    @NonNull String name,
+                                    @Nullable Object value,
+                                    boolean optional) throws JSONException {
+        if (optional) {
+            jsonObject.putOpt(name, value);
+        } else {
+            jsonObject.put(name, value);
+        }
+    }
+
     @Nullable
     protected static JSONObject getObject(@NonNull JSONObject jsonObject,
                                           @NonNull String name,
@@ -216,5 +259,38 @@ public abstract class EpoxyJsonBinder<T> {
                                         @NonNull String name,
                                         boolean optional) throws JSONException {
         return optional ? jsonObject.optJSONArray(name) : jsonObject.getJSONArray(name);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Nullable
+    protected static <T> T[] parseMultiDimensionalArray(@Nullable JSONObject jsonObject,
+                                                        @NonNull String name,
+                                                        @NonNull Class<T> typeClass,
+                                                        boolean optional) throws IOException, JSONException {
+        JSONArray jsonArray = jsonObject != null ? getArray(jsonObject, name, optional) : null;
+        T[] result = jsonArray != null ? parseMultiDimensionalArray(jsonArray, typeClass, optional) : null;
+        if (result == null && !optional) {
+            throw new JSONException("Non optional field " + name + " could not be parsed");
+        } else {
+            return result;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Nullable
+    private static <T> T[] parseMultiDimensionalArray(@Nullable JSONArray jsonArray,
+                                                      @NonNull Class<T> typeClass,
+                                                      boolean optional) throws IOException, JSONException {
+        if (jsonArray == null) return null;
+        int length = jsonArray.length();
+        T[] array =  (T[]) Array.newInstance(typeClass, length);
+        for (int i = 0; i < length; i++) {
+            if (typeClass.isArray()) {
+                array[i] = (T) parseMultiDimensionalArray(jsonArray.getJSONArray(i), typeClass.getComponentType(), optional);
+            } else {
+                array[i] = (T) (optional ? jsonArray.opt(i) : jsonArray.get(i));
+            }
+        }
+        return array;
     }
 }

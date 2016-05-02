@@ -34,10 +34,10 @@ import static me.oriley.epoxy.EpoxyProcessor.*;
 @SuppressWarnings("WeakerAccess")
 final class EpoxyJsonBinding {
 
+    private static final String BOX = "[]";
     private static final String BINDING_CLASS_SUFFIX = "$$EpoxyBinder";
-    private static final String TO_JSON = "toJson";
     private static final String PARSE_JSON = "parseJson";
-    private static final String MODEL = "model";
+    private static final String PARSE_MODEL = "parseModel";
 
     private static final String STRING_CLASS = "java.lang.String";
     private static final String LIST_CLASS = "java.util.List";
@@ -55,8 +55,16 @@ final class EpoxyJsonBinding {
     private static final String PARSE_LONG = "parseLong";
     private static final String PARSE_FLOAT = "parseFloat";
     private static final String PARSE_DOUBLE = "parseDouble";
-    private static final String PARSE_INT = "parseInteger";
+    private static final String PARSE_INTEGER = "parseInteger";
     private static final String PARSE_BOOLEAN = "parseBoolean";
+
+    private static final String PARSE_MULTI_ARRAY = "parseMultiDimensionalArray";
+
+    private static final String PUT_BOOLEAN = "putBoolean";
+    private static final String PUT_DOUBLE = "putDouble";
+    private static final String PUT_INTEGER = "putInteger";
+    private static final String PUT_LONG = "putLong";
+    private static final String PUT_OBJECT = "putObject";
 
     private static final String GET_OBJECT = "getObject";
     private static final String GET_ARRAY = "getArray";
@@ -135,12 +143,15 @@ final class EpoxyJsonBinding {
                 .addStatement("super.$L($L, $L)", PARSE_JSON, MODEL, JSON_OBJECT);
 
         for (BindingElement element : mElementList) {
-            if (element.fromEpoxy) {
+            if (element.dimensions > 1) {
+                builder.addStatement("$L.$L = $L($L, $S, $L.class, $L)", MODEL, element.fieldName, element.getMethod, JSON_OBJECT,
+                        element.jsonName, element.getArrayElementName(), element.isOptional);
+            } else if (element.fromEpoxy) {
                 String epoxyMethod = element.isList ? LIST_FROM_JSON : FROM_JSON;
                 builder.addStatement("$L.$L = $T.$L($L($L, $S, $L), $L.class)", MODEL, element.fieldName, EPOXY_JSON, epoxyMethod,
-                        element.method, JSON_OBJECT, element.jsonName, element.isOptional, element.className);
+                        element.getMethod, JSON_OBJECT, element.jsonName, element.isOptional, element.className);
             } else {
-                builder.addStatement("$L.$L = $L($L, $S, $L)", MODEL, element.fieldName, element.method, JSON_OBJECT,
+                builder.addStatement("$L.$L = $L($L, $S, $L)", MODEL, element.fieldName, element.getMethod, JSON_OBJECT,
                         element.jsonName, element.isOptional);
             }
         }
@@ -148,16 +159,46 @@ final class EpoxyJsonBinding {
         return builder.build();
     }
 
-    // TODO: Write object back to JSON
-//    @Nonnull
-//    MethodSpec createToJsonMethod() {
-//        return MethodSpec.methodBuilder(TO_JSON)
-//                .addAnnotation(CALL_SUPER)
-//                .addAnnotation(NULLABLE)
-//                .addParameter(ParameterSpec.builder(getObjectClassName(), MODEL).addAnnotation(NONNULL).build())
-//                .addModifiers(PUBLIC)
-//                .build();
-//    }
+    @Nonnull
+    MethodSpec createToJsonMethod() {
+        MethodSpec.Builder builder = MethodSpec.methodBuilder(TO_JSON)
+                .returns(JSON_OBJECT_CLASS)
+                .addAnnotation(CALL_SUPER)
+                .addAnnotation(NULLABLE)
+                .addParameter(ParameterSpec.builder(T, MODEL).addAnnotation(NONNULL).build())
+                .addModifiers(PUBLIC)
+                .addException(IOException.class)
+                .addException(JSON_EXCEPTION_CLASS);
+
+        return builder.addStatement("$T $L = new $T()", JSON_OBJECT_CLASS, JSON_OBJECT, JSON_OBJECT_CLASS)
+                .addStatement("$L($L, $L)", PARSE_MODEL, JSON_OBJECT, MODEL)
+                .addStatement("return $L", JSON_OBJECT).build();
+    }
+
+    @Nonnull
+    MethodSpec createParseModelMethod() {
+        MethodSpec.Builder builder = MethodSpec.methodBuilder(PARSE_MODEL)
+                .addAnnotation(CALL_SUPER)
+                .addAnnotation(NULLABLE)
+                .addParameter(ParameterSpec.builder(JSON_OBJECT_CLASS, JSON_OBJECT).addAnnotation(NONNULL).build())
+                .addParameter(ParameterSpec.builder(T, MODEL).addAnnotation(NONNULL).build())
+                .addModifiers(PUBLIC)
+                .addException(IOException.class)
+                .addException(JSON_EXCEPTION_CLASS)
+                .addStatement("super.$L($L, $L)", PARSE_MODEL, JSON_OBJECT, MODEL);
+
+        for (BindingElement element : mElementList) {
+            if (element.isPrimitive) {
+                builder.addStatement("$L($L, $S, $L.$L)", element.putMethod, JSON_OBJECT, element.jsonName, MODEL,
+                        element.fieldName);
+            } else {
+                builder.addStatement("$L($L, $S, $L.$L, $L)", element.putMethod, JSON_OBJECT, element.jsonName, MODEL,
+                        element.fieldName, element.isOptional);
+            }
+        }
+
+        return builder.build();
+    }
 
     @Override
     public String toString() {
@@ -176,11 +217,16 @@ final class EpoxyJsonBinding {
         public final String jsonName;
 
         @Nonnull
-        public final String method;
+        public final String getMethod;
+
+        @Nonnull
+        public final String putMethod;
+
+        public final int dimensions;
 
         public final boolean isOptional;
 
-        public final boolean isArray;
+        public final boolean isPrimitive;
 
         public final boolean isList;
 
@@ -196,56 +242,85 @@ final class EpoxyJsonBinding {
             TypeKind elementKind = element.asType().getKind();
             boolean fromEpoxy = false;
             boolean isList = false;
-            boolean isArray = false;
+            boolean isPrimitive = false;
+            int dimensions = 0;
 
             switch (elementKind) {
                 case BOOLEAN:
-                    method = PARSE_BOOLEAN;
+                    isPrimitive = true;
+                    getMethod = PARSE_BOOLEAN;
+                    putMethod = PUT_BOOLEAN;
                     break;
                 case INT:
-                    method = PARSE_INT;
+                    isPrimitive = true;
+                    getMethod = PARSE_INTEGER;
+                    putMethod = PUT_INTEGER;
                     break;
                 case LONG:
-                    method = PARSE_LONG;
+                    isPrimitive = true;
+                    getMethod = PARSE_LONG;
+                    putMethod = PUT_LONG;
                     break;
                 case DOUBLE:
-                    method = PARSE_DOUBLE;
+                    isPrimitive = true;
+                    getMethod = PARSE_DOUBLE;
+                    putMethod = PUT_DOUBLE;
                     break;
                 case SHORT:
-                    method = PARSE_SHORT;
+                    isPrimitive = true;
+                    getMethod = PARSE_SHORT;
+                    putMethod = PUT_INTEGER;
                     break;
                 case FLOAT:
-                    method = PARSE_FLOAT;
+                    isPrimitive = true;
+                    getMethod = PARSE_FLOAT;
+                    putMethod = PUT_DOUBLE;
                     break;
                 case ARRAY:
+                    putMethod = PUT_OBJECT;
                     TypeKind arrayKind = ((ArrayType) element.asType()).getComponentType().getKind();
-                    className = className.replace("[]", "");
-                    isArray = true;
+
+                    int i = 0;
+                    while (i < className.length()) {
+                        int j = className.indexOf(BOX, i);
+                        if (j > 0) {
+                            dimensions++;
+                            i = j + 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    className = className.replaceAll("\\[\\]", "");
+
                     switch (arrayKind) {
                         case BOOLEAN:
-                            method = PARSE_BOOLEAN_ARRAY;
+                            getMethod = PARSE_BOOLEAN_ARRAY;
                             break;
                         case INT:
-                            method = PARSE_INT_ARRAY;
+                            getMethod = PARSE_INT_ARRAY;
                             break;
                         case LONG:
-                            method = PARSE_LONG_ARRAY;
+                            getMethod = PARSE_LONG_ARRAY;
                             break;
                         case DOUBLE:
-                            method = PARSE_DOUBLE_ARRAY;
+                            getMethod = PARSE_DOUBLE_ARRAY;
                             break;
                         case SHORT:
-                            method = PARSE_SHORT_ARRAY;
+                            getMethod = PARSE_SHORT_ARRAY;
                             break;
                         case FLOAT:
-                            method = PARSE_FLOAT_ARRAY;
+                            getMethod = PARSE_FLOAT_ARRAY;
+                            break;
+                        case ARRAY:
+                            // TODO: Fix for primitive and custom object multidimen arrays?
+                            getMethod = PARSE_MULTI_ARRAY;
                             break;
                         case DECLARED:
                             if (STRING_CLASS.equals(className)) {
-                                method = PARSE_STRING_ARRAY;
+                                getMethod = PARSE_STRING_ARRAY;
                             } else {
-                                // TODO: Handle multi dimensional arrays
-                                method = GET_ARRAY;
+                                getMethod = GET_ARRAY;
                                 fromEpoxy = true;
                             }
                             break;
@@ -254,16 +329,17 @@ final class EpoxyJsonBinding {
                     }
                     break;
                 case DECLARED:
+                    putMethod = PUT_OBJECT;
                     if (className.equals(STRING_CLASS)) {
-                        method = PARSE_STRING;
+                        getMethod = PARSE_STRING;
                     } else if (className.contains(LIST_CLASS)) {
                         // TODO: Fix list handling
 //                        className = className.replaceAll(".*<", "").replaceAll(">.*", "");
-                        method = GET_ARRAY;
+                        getMethod = GET_ARRAY;
                         isList = true;
                         fromEpoxy = true;
                     } else {
-                        method = GET_OBJECT;
+                        getMethod = GET_OBJECT;
                         fromEpoxy = true;
                     }
                     break;
@@ -273,8 +349,18 @@ final class EpoxyJsonBinding {
 
             this.className = className;
             this.fromEpoxy = fromEpoxy;
-            this.isArray = isArray;
             this.isList = isList;
+            this.isPrimitive = isPrimitive;
+            this.dimensions = dimensions;
+        }
+
+        @Nonnull
+        public String getArrayElementName() {
+            String elementClassName = this.className;
+            for (int i = 1; i < dimensions; i++) {
+                elementClassName += BOX;
+            }
+            return elementClassName;
         }
 
         @Override
@@ -282,7 +368,8 @@ final class EpoxyJsonBinding {
             return "Field: " + fieldName +
                     ", Json: " + jsonName +
                     ", Optional: " + isOptional +
-                    ", Getter: " + method;
+                    ", Getter: " + getMethod +
+                    ", Putter: " + putMethod;
         }
     }
 }
