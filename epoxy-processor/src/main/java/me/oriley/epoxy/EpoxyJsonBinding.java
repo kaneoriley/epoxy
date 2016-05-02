@@ -191,6 +191,9 @@ final class EpoxyJsonBinding {
             if (element.isPrimitive) {
                 builder.addStatement("$L($L, $S, $L.$L)", element.putMethod, JSON_OBJECT, element.jsonName, MODEL,
                         element.fieldName);
+            } else if (element.fromEpoxy) {
+                builder.addStatement("$L($L, $S, $T.$L($L.$L, $L.class), $L)", element.putMethod, JSON_OBJECT,
+                        element.jsonName, EPOXY_JSON, TO_JSON, MODEL, element.fieldName, element.className, element.isOptional);
             } else {
                 builder.addStatement("$L($L, $S, $L.$L, $L)", element.putMethod, JSON_OBJECT, element.jsonName, MODEL,
                         element.fieldName, element.isOptional);

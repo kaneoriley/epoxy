@@ -47,12 +47,10 @@ public final class EpoxyProcessor extends AbstractProcessor {
     private static final String BINDER_MAP = "BINDER_MAP";
     private static final String GET_BINDER = "getBinder";
     private static final String GET_JSON_OBJECT = "getJSONObject";
-    private static final String ADD = "add";
     private static final String ARRAY = "array";
     private static final String BINDER = "binder";
     private static final String JSON = "json";
     private static final String LENGTH = "length";
-    private static final String LIST = "list";
     private static final String GET = "get";
     private static final String PUT = "put";
     private static final String NEW_INSTANCE = "newInstance";
@@ -248,31 +246,30 @@ public final class EpoxyProcessor extends AbstractProcessor {
                 .returns(ArrayTypeName.of(T))
                 .build());
 
+        // To JSONArray method
+        builder.addMethod(MethodSpec.methodBuilder(TO_JSON)
+                .addAnnotation(NULLABLE)
+                .addModifiers(PUBLIC, STATIC)
+                .addTypeVariable(T)
+                .addException(IOException.class)
+                .addException(JSON_EXCEPTION_CLASS)
+                .addParameter(ParameterSpec.builder(ArrayTypeName.of(T), MODEL).addAnnotation(NULLABLE).build())
+                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
+                        .addAnnotation(NONNULL).build())
+                .addStatement("if ($L == null) return null", MODEL)
+                .addStatement("$T $L = $L($L)", ParameterizedTypeName.get(EPOXY_JSON_BINDER, T), BINDER, GET_BINDER, TYPE_CLASS)
+                .beginControlFlow("if ($L == null)", BINDER)
+                .addStatement("throw new $T(\"Binder not found for type \" + $L)", JSON_EXCEPTION_CLASS, TYPE_CLASS)
+                .endControlFlow()
+                .addStatement("$T $L = new $T()", JSON_ARRAY_CLASS, JSON_ARRAY, JSON_ARRAY_CLASS)
+                .beginControlFlow("for ($T t : $L)", T, MODEL)
+                .addStatement("$L.$L($L.$L(t))", JSON_ARRAY, PUT, BINDER, TO_JSON)
+                .endControlFlow()
+                .addStatement("return $L", JSON_ARRAY)
+                .returns(JSON_ARRAY_CLASS)
+                .build());
+
         // TODO: List support
-//        // From JSONArray method
-//        ParameterizedTypeName listType = ParameterizedTypeName.get(ClassName.get(List.class), T);
-//        builder.addMethod(MethodSpec.methodBuilder(LIST_FROM_JSON)
-//                .addAnnotation(NULLABLE)
-//                .addModifiers(PUBLIC, STATIC)
-//                .addTypeVariable(T)
-//                .addException(IOException.class)
-//                .addException(JSON_EXCEPTION_CLASS)
-//                .addParameter(ParameterSpec.builder(JSON_ARRAY_CLASS, JSON_ARRAY).addAnnotation(NULLABLE).build())
-//                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
-//                        .addAnnotation(NONNULL).build())
-//                .addStatement("if ($L == null) return null", JSON_ARRAY)
-//                .addStatement("$T $L = $L($L)", ParameterizedTypeName.get(EPOXY_JSON_BINDER, T), BINDER, GET_BINDER, TYPE_CLASS)
-//                .beginControlFlow("if ($L == null)", BINDER)
-//                .addStatement("throw new $T(\"Binder not found for type \" + $L)", JSON_EXCEPTION_CLASS, TYPE_CLASS)
-//                .endControlFlow()
-//                .addStatement("int $L = $L.$L()", LENGTH, JSON_ARRAY, LENGTH)
-//                .addStatement("$T $L =  new $T<>()", List.class, LIST, ArrayList.class)
-//                .beginControlFlow("for (int i = 0; i < $L; i++)", LENGTH)
-//                .addStatement("$L.$L(i, $L.$L($L.$L(i)))", LIST, ADD, BINDER, FROM_JSON, JSON_ARRAY, GET_JSON_OBJECT)
-//                .endControlFlow()
-//                .addStatement("return $L", LIST)
-//                .returns(listType)
-//                .build());
 
         try {
             JavaFile.builder(EPOXY_JSON.packageName(), builder.build())
