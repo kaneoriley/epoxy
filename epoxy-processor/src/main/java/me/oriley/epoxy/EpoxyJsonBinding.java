@@ -90,6 +90,9 @@ final class EpoxyJsonBinding {
     @Nullable
     private EpoxyJsonBinding parentBinding;
 
+    @Nullable
+    private String onCompleteMethod;
+
     EpoxyJsonBinding(@Nonnull String packageName, @Nonnull String className) {
         this.packageName = packageName;
         this.className = className;
@@ -102,6 +105,10 @@ final class EpoxyJsonBinding {
 
     void setParentBinding(@Nonnull EpoxyJsonBinding parentBinding) {
         this.parentBinding = parentBinding;
+    }
+
+    void setOnCompleteMethod(@Nonnull String onCompleteMethod) {
+        this.onCompleteMethod = onCompleteMethod;
     }
 
     @Nonnull
@@ -162,6 +169,10 @@ final class EpoxyJsonBinding {
                 builder.addStatement("$L.$L = $L($L, $S, $L)", MODEL, element.fieldName, element.getMethod, JSON_OBJECT,
                         element.jsonName, element.isOptional);
             }
+        }
+
+        if (onCompleteMethod != null) {
+            builder.addStatement("$L.$L($L)", MODEL, onCompleteMethod, JSON_OBJECT);
         }
 
         return builder.build();

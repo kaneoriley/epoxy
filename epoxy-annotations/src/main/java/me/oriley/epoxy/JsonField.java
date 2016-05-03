@@ -18,7 +18,6 @@ package me.oriley.epoxy;
 
 import java.lang.annotation.*;
 
-@SuppressWarnings({"WeakerAccess", "unused"})
 @Retention(RetentionPolicy.SOURCE)
 @Target(ElementType.FIELD)
 public @interface JsonField {

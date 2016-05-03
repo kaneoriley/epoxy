@@ -94,11 +94,31 @@ public final class EpoxyProcessor extends AbstractProcessor {
     public Set<String> getSupportedAnnotationTypes() {
         Set<String> types = new LinkedHashSet<>();
         types.add(JsonField.class.getCanonicalName());
+        types.add(JsonOnComplete.class.getCanonicalName());
         return types;
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> elements, RoundEnvironment env) {
+
+        Map<String, String> onCompleteMethods = new HashMap<>();
+        for (Element element : env.getElementsAnnotatedWith(JsonOnComplete.class)) {
+            if (!SuperficialValidation.validateElement(element)) continue;
+            if (isInaccessibleViaGeneratedCode(JsonOnComplete.class, element)) continue;
+
+            TypeElement enclosingElement = (TypeElement) element.getEnclosingElement();
+            String componentPackage = getPackageName(enclosingElement);
+            String className = getClassName(enclosingElement, componentPackage);
+
+            if (onCompleteMethods.containsKey(className)) {
+                error("Multiple %s annotations are not allowed, found in %s", JsonOnComplete.class.getSimpleName(),
+                        className);
+            } else {
+                String methodName = element.getSimpleName().toString();
+                onCompleteMethods.put(className, methodName);
+            }
+        }
+
         Map<TypeElement, EpoxyJsonBinding> targetClassMap = new HashMap<>();
         for (Element element : env.getElementsAnnotatedWith(JsonField.class)) {
             if (!SuperficialValidation.validateElement(element)) continue;
@@ -113,6 +133,10 @@ public final class EpoxyProcessor extends AbstractProcessor {
             if (binding == null) {
                 binding = new EpoxyJsonBinding(componentPackage, className);
                 targetClassMap.put(enclosingElement, binding);
+
+                if (onCompleteMethods.containsKey(className)) {
+                    binding.setOnCompleteMethod(onCompleteMethods.get(className));
+                }
             }
             binding.addElement(element);
         }
