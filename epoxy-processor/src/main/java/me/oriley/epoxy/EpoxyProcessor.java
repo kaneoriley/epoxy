@@ -59,7 +59,6 @@ public final class EpoxyProcessor extends AbstractProcessor {
     static final String FROM_JSON = "fromJson";
     static final String TO_JSON = "toJson";
     static final String MODEL = "model";
-    static final String LIST_FROM_JSON = "listFromJson";
     static final String JSON_OBJECT = "jsonObject";
 
     static final ClassName CALL_SUPER = ClassName.get("android.support.annotation", "CallSuper");

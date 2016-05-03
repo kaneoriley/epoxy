@@ -188,28 +188,11 @@ public abstract class EpoxyJsonBinder<T> {
     }
 
     @Nullable
-    protected static String parseString(@NonNull JSONObject jsonObject,
-                                        @NonNull String name,
-                                        boolean optional) throws JSONException {
-        return optional ? jsonObject.optString(name) : jsonObject.getString(name);
-    }
-
-    @Nullable
-    protected static String[] parseStringArray(@NonNull JSONObject jsonObject,
-                                               @NonNull String name,
-                                               boolean optional) throws JSONException {
-        JSONArray jsonArray = optional ? jsonObject.optJSONArray(name) : jsonObject.getJSONArray(name);
-        if (jsonArray == null) {
-            return null;
-        }
-
-        int length = jsonArray.length();
-        String[] array = new String[length];
-
-        for (int i = 0; i < length; i++) {
-            array[i] = jsonArray.getString(i);
-        }
-        return array;
+    protected static <T> T parseValue(@NonNull JSONObject jsonObject,
+                                       @NonNull String name,
+                                       boolean optional) throws JSONException {
+        //noinspection unchecked
+        return (T) (optional ? jsonObject.opt(name) : jsonObject.get(name));
     }
 
     protected static void putBoolean(@NonNull JSONObject jsonObject,
@@ -263,32 +246,68 @@ public abstract class EpoxyJsonBinder<T> {
 
     @SuppressWarnings("unchecked")
     @Nullable
-    protected static <T> T[] parseMultiDimensionalArray(@Nullable JSONObject jsonObject,
-                                                        @NonNull String name,
-                                                        @NonNull Class<T> typeClass,
-                                                        boolean optional) throws IOException, JSONException {
+    protected static <T> T[] parseArray(@Nullable JSONObject jsonObject,
+                                        @NonNull String name,
+                                        @NonNull Class<T> elementClass,
+                                        boolean optional) throws IOException, JSONException {
         JSONArray jsonArray = jsonObject != null ? getArray(jsonObject, name, optional) : null;
-        T[] result = jsonArray != null ? parseMultiDimensionalArray(jsonArray, typeClass, optional) : null;
+        Object result = jsonArray != null ? parseArray(jsonArray, elementClass, optional) : null;
         if (result == null && !optional) {
             throw new JSONException("Non optional field " + name + " could not be parsed");
         } else {
-            return result;
+            return (T[]) result;
         }
     }
 
-    @SuppressWarnings("unchecked")
+    protected static void putArray(@NonNull JSONObject jsonObject,
+                                   @NonNull String name,
+                                   @Nullable Object array,
+                                   boolean optional) throws JSONException {
+        if (array == null) {
+            if (optional) {
+                return;
+            } else {
+                throw new JSONException("Non optional array " + name + " was null");
+            }
+        }
+
+        if (array instanceof JSONArray) {
+            // Short circuit, we're done here
+            jsonObject.put(name, array);
+            return;
+        }
+
+        JSONArray jsonArray = buildArray(array);
+        jsonObject.put(name, jsonArray);
+    }
+
+    @NonNull
+    private static JSONArray buildArray(@NonNull Object array) {
+        JSONArray jsonArray = new JSONArray();
+        int arrayLength = Array.getLength(array);
+        for (int i = 0; i < arrayLength; i++) {
+            Object value = Array.get(array, i);
+            if (value.getClass().isArray()) {
+                jsonArray.put(buildArray(value));
+            } else {
+                jsonArray.put(value);
+            }
+        }
+        return jsonArray;
+    }
+
     @Nullable
-    private static <T> T[] parseMultiDimensionalArray(@Nullable JSONArray jsonArray,
-                                                      @NonNull Class<T> typeClass,
-                                                      boolean optional) throws IOException, JSONException {
+    private static Object parseArray(@Nullable JSONArray jsonArray,
+                                     @NonNull Class typeClass,
+                                     boolean optional) throws IOException, JSONException {
         if (jsonArray == null) return null;
         int length = jsonArray.length();
-        T[] array =  (T[]) Array.newInstance(typeClass, length);
+        Object array =  Array.newInstance(typeClass, length);
         for (int i = 0; i < length; i++) {
             if (typeClass.isArray()) {
-                array[i] = (T) parseMultiDimensionalArray(jsonArray.getJSONArray(i), typeClass.getComponentType(), optional);
+                Array.set(array, i, parseArray(jsonArray.getJSONArray(i), typeClass.getComponentType(), optional));
             } else {
-                array[i] = (T) (optional ? jsonArray.opt(i) : jsonArray.get(i));
+                Array.set(array, i, optional ? jsonArray.opt(i) : jsonArray.get(i));
             }
         }
         return array;

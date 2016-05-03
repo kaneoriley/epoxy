@@ -26,6 +26,7 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static javax.lang.model.element.Modifier.PUBLIC;
@@ -39,10 +40,17 @@ final class EpoxyJsonBinding {
     private static final String PARSE_JSON = "parseJson";
     private static final String PARSE_MODEL = "parseModel";
 
-    private static final String STRING_CLASS = "java.lang.String";
-    private static final String LIST_CLASS = "java.util.List";
+    private static final String STRING_CLASS = String.class.getName();
+    private static final String SHORT_CLASS = Short.class.getName();
+    private static final String LONG_CLASS = Long.class.getName();
+    private static final String FLOAT_CLASS = Float.class.getName();
+    private static final String DOUBLE_CLASS = Double.class.getName();
+    private static final String INT_CLASS = Integer.class.getName();
+    private static final String BOOLEAN_CLASS = Boolean.class.getName();
 
-    private static final String PARSE_STRING_ARRAY = "parseStringArray";
+    private static final List<String> BOXED_TYPES = Arrays.asList(STRING_CLASS, SHORT_CLASS, LONG_CLASS, FLOAT_CLASS,
+            DOUBLE_CLASS, INT_CLASS, BOOLEAN_CLASS);
+
     private static final String PARSE_SHORT_ARRAY = "parseShortArray";
     private static final String PARSE_LONG_ARRAY = "parseLongArray";
     private static final String PARSE_FLOAT_ARRAY = "parseFloatArray";
@@ -50,7 +58,6 @@ final class EpoxyJsonBinding {
     private static final String PARSE_INT_ARRAY = "parseIntegerArray";
     private static final String PARSE_BOOLEAN_ARRAY = "parseBooleanArray";
 
-    private static final String PARSE_STRING = "parseString";
     private static final String PARSE_SHORT = "parseShort";
     private static final String PARSE_LONG = "parseLong";
     private static final String PARSE_FLOAT = "parseFloat";
@@ -58,13 +65,15 @@ final class EpoxyJsonBinding {
     private static final String PARSE_INTEGER = "parseInteger";
     private static final String PARSE_BOOLEAN = "parseBoolean";
 
-    private static final String PARSE_MULTI_ARRAY = "parseMultiDimensionalArray";
+    private static final String PARSE_VALUE = "parseValue";
+    private static final String PARSE_ARRAY = "parseArray";
 
     private static final String PUT_BOOLEAN = "putBoolean";
     private static final String PUT_DOUBLE = "putDouble";
     private static final String PUT_INTEGER = "putInteger";
     private static final String PUT_LONG = "putLong";
     private static final String PUT_OBJECT = "putObject";
+    private static final String PUT_ARRAY = "putArray";
 
     private static final String GET_OBJECT = "getObject";
     private static final String GET_ARRAY = "getArray";
@@ -143,12 +152,11 @@ final class EpoxyJsonBinding {
                 .addStatement("super.$L($L, $L)", PARSE_JSON, MODEL, JSON_OBJECT);
 
         for (BindingElement element : mElementList) {
-            if (element.dimensions > 1) {
+            if (element.dimensions > 0 && !element.isPrimitive && !element.fromEpoxy) {
                 builder.addStatement("$L.$L = $L($L, $S, $L.class, $L)", MODEL, element.fieldName, element.getMethod, JSON_OBJECT,
                         element.jsonName, element.getArrayElementName(), element.isOptional);
             } else if (element.fromEpoxy) {
-                String epoxyMethod = element.isList ? LIST_FROM_JSON : FROM_JSON;
-                builder.addStatement("$L.$L = $T.$L($L($L, $S, $L), $L.class)", MODEL, element.fieldName, EPOXY_JSON, epoxyMethod,
+                builder.addStatement("$L.$L = $T.$L($L($L, $S, $L), $L.class)", MODEL, element.fieldName, EPOXY_JSON, FROM_JSON,
                         element.getMethod, JSON_OBJECT, element.jsonName, element.isOptional, element.className);
             } else {
                 builder.addStatement("$L.$L = $L($L, $S, $L)", MODEL, element.fieldName, element.getMethod, JSON_OBJECT,
@@ -188,7 +196,7 @@ final class EpoxyJsonBinding {
                 .addStatement("super.$L($L, $L)", PARSE_MODEL, JSON_OBJECT, MODEL);
 
         for (BindingElement element : mElementList) {
-            if (element.isPrimitive) {
+            if (element.isPrimitive && element.dimensions <= 0) {
                 builder.addStatement("$L($L, $S, $L.$L)", element.putMethod, JSON_OBJECT, element.jsonName, MODEL,
                         element.fieldName);
             } else if (element.fromEpoxy) {
@@ -231,8 +239,6 @@ final class EpoxyJsonBinding {
 
         public final boolean isPrimitive;
 
-        public final boolean isList;
-
         public final boolean fromEpoxy;
 
         BindingElement(@Nonnull Element element) {
@@ -244,7 +250,6 @@ final class EpoxyJsonBinding {
 
             TypeKind elementKind = element.asType().getKind();
             boolean fromEpoxy = false;
-            boolean isList = false;
             boolean isPrimitive = false;
             int dimensions = 0;
 
@@ -280,7 +285,7 @@ final class EpoxyJsonBinding {
                     putMethod = PUT_DOUBLE;
                     break;
                 case ARRAY:
-                    putMethod = PUT_OBJECT;
+                    putMethod = PUT_ARRAY;
                     TypeKind arrayKind = ((ArrayType) element.asType()).getComponentType().getKind();
 
                     int i = 0;
@@ -298,31 +303,39 @@ final class EpoxyJsonBinding {
 
                     switch (arrayKind) {
                         case BOOLEAN:
+                            isPrimitive = true;
                             getMethod = PARSE_BOOLEAN_ARRAY;
                             break;
                         case INT:
+                            isPrimitive = true;
                             getMethod = PARSE_INT_ARRAY;
                             break;
                         case LONG:
+                            isPrimitive = true;
                             getMethod = PARSE_LONG_ARRAY;
                             break;
                         case DOUBLE:
+                            isPrimitive = true;
                             getMethod = PARSE_DOUBLE_ARRAY;
                             break;
                         case SHORT:
+                            isPrimitive = true;
                             getMethod = PARSE_SHORT_ARRAY;
                             break;
                         case FLOAT:
+                            isPrimitive = true;
                             getMethod = PARSE_FLOAT_ARRAY;
                             break;
                         case ARRAY:
-                            // TODO: Fix for primitive and custom object multidimen arrays?
-                            getMethod = PARSE_MULTI_ARRAY;
+                            // TODO: Fix for Short/Float and custom object multidimen arrays
+                            getMethod = PARSE_ARRAY;
                             break;
                         case DECLARED:
-                            if (STRING_CLASS.equals(className)) {
-                                getMethod = PARSE_STRING_ARRAY;
+                            if (BOXED_TYPES.contains(className)) {
+                                // TODO: Fix for Short/Float
+                                getMethod = PARSE_ARRAY;
                             } else {
+                                // Last resort
                                 getMethod = GET_ARRAY;
                                 fromEpoxy = true;
                             }
@@ -333,15 +346,23 @@ final class EpoxyJsonBinding {
                     break;
                 case DECLARED:
                     putMethod = PUT_OBJECT;
-                    if (className.equals(STRING_CLASS)) {
-                        getMethod = PARSE_STRING;
-                    } else if (className.contains(LIST_CLASS)) {
-                        // TODO: Fix list handling
-//                        className = className.replaceAll(".*<", "").replaceAll(">.*", "");
-                        getMethod = GET_ARRAY;
-                        isList = true;
-                        fromEpoxy = true;
+
+                    if (INT_CLASS.equals(className)) {
+                        getMethod = PARSE_INTEGER;
+                    } else if (BOOLEAN_CLASS.equals(className)) {
+                        getMethod = PARSE_BOOLEAN;
+                    } else if (FLOAT_CLASS.equals(className)) {
+                        getMethod = PARSE_FLOAT;
+                    } else if (LONG_CLASS.equals(className)) {
+                        getMethod = PARSE_LONG;
+                    } else if (SHORT_CLASS.equals(className)) {
+                        getMethod = PARSE_SHORT;
+                    } else if (DOUBLE_CLASS.equals(className)) {
+                        getMethod = PARSE_DOUBLE;
+                    } else if (BOXED_TYPES.contains(className)) {
+                        getMethod = PARSE_VALUE;
                     } else {
+                        // Last resort
                         getMethod = GET_OBJECT;
                         fromEpoxy = true;
                     }
@@ -352,7 +373,6 @@ final class EpoxyJsonBinding {
 
             this.className = className;
             this.fromEpoxy = fromEpoxy;
-            this.isList = isList;
             this.isPrimitive = isPrimitive;
             this.dimensions = dimensions;
         }
