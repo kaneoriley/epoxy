@@ -16,12 +16,13 @@
 
 package me.oriley.epoxy;
 
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+class EpoxyException extends Exception {
 
-@Target(ElementType.METHOD)
-@Retention(RetentionPolicy.SOURCE)
-public @interface JsonOnComplete {
+    EpoxyException(String message) {
+        super(message);
+    }
+
+    EpoxyException(Throwable cause) {
+        super(cause);
+    }
 }

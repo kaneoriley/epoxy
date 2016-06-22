@@ -7,410 +7,310 @@
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package me.oriley.epoxy;
 
-import com.google.auto.common.SuperficialValidation;
-import com.google.auto.service.AutoService;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.util.JsonReader;
+import android.util.JsonToken;
+import android.util.JsonWriter;
 import com.squareup.javapoet.*;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
-import javax.annotation.processing.*;
-import javax.lang.model.SourceVersion;
+import javax.annotation.processing.Filer;
+import javax.annotation.processing.ProcessingEnvironment;
+import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.Elements;
 import java.io.IOException;
-import java.lang.annotation.Annotation;
-import java.lang.reflect.Array;
+import java.lang.reflect.ParameterizedType;
 import java.util.*;
 
-import static javax.lang.model.element.ElementKind.CLASS;
-import static javax.lang.model.element.Modifier.*;
-import static javax.tools.Diagnostic.Kind.ERROR;
+import static java.util.Locale.US;
+import static me.oriley.epoxy.ProcessorUtils.isPrivate;
+import static me.oriley.epoxy.ProcessorUtils.isStatic;
 
-@AutoService(Processor.class)
-public final class EpoxyProcessor extends AbstractProcessor {
+public final class EpoxyProcessor extends BaseProcessor {
 
-    private static final String COMMENT = "Generated code from EpoxyProcessor.\nDo not modify!";
-    private static final String BINDER_MAP = "BINDER_MAP";
-    private static final String GET_BINDER = "getBinder";
-    private static final String GET_JSON_OBJECT = "getJSONObject";
-    private static final String ARRAY = "array";
-    private static final String BINDER = "binder";
-    private static final String JSON = "json";
-    private static final String LENGTH = "length";
-    private static final String GET = "get";
-    private static final String PUT = "put";
-    private static final String NEW_INSTANCE = "newInstance";
-    private static final String TYPE_CLASS = "typeClass";
-    private static final String JSON_ARRAY = "jsonArray";
-    static final String FROM_JSON = "fromJson";
-    static final String TO_JSON = "toJson";
-    static final String MODEL = "model";
-    static final String JSON_OBJECT = "jsonObject";
+    private static final String NAME = "name";
+    private static final String EPOXY = "epoxy";
+    private static final String FROM_JSON = "fromJson";
+    private static final String TO_JSON = "toJson";
+    private static final String JSON_READER = "jsonReader";
+    private static final String JSON_WRITER = "jsonWriter";
+    private static final String OBJECT = "object";
 
-    static final ClassName CALL_SUPER = ClassName.get("android.support.annotation", "CallSuper");
-    static final ClassName NULLABLE = ClassName.get("android.support.annotation", "Nullable");
-    static final ClassName NONNULL = ClassName.get("android.support.annotation", "NonNull");
-    static final TypeVariableName T = TypeVariableName.get("T");
-
-    private static final ClassName JSON_ARRAY_CLASS = ClassName.get("org.json", "JSONArray");
-    static final ClassName EPOXY_JSON_BINDER = ClassName.get("me.oriley.epoxy", "EpoxyJsonBinder");
-    static final ClassName EPOXY_JSON = ClassName.get("me.oriley.epoxy", "EpoxyJson");
-    static final ClassName JSON_OBJECT_CLASS = ClassName.get("org.json", "JSONObject");
-    static final ClassName JSON_EXCEPTION_CLASS = ClassName.get("org.json", "JSONException");
-
-    @Nonnull
-    private Elements mElementUtils;
-
-    @Nonnull
+    @NonNull
     private Filer mFiler;
 
     @Override
     public synchronized void init(ProcessingEnvironment env) {
         super.init(env);
-        mElementUtils = env.getElementUtils();
         mFiler = env.getFiler();
+        setTag(EpoxyProcessor.class.getSimpleName());
+    }
+
+    @NonNull
+    @Override
+    protected Class[] getSupportedAnnotationClasses() {
+        return new Class[]{JsonField.class};
     }
 
     @Override
-    public SourceVersion getSupportedSourceVersion() {
-        return SourceVersion.latestSupported();
-    }
-
-    @Override
-    public Set<String> getSupportedAnnotationTypes() {
-        Set<String> types = new LinkedHashSet<>();
-        types.add(JsonField.class.getCanonicalName());
-        types.add(JsonOnComplete.class.getCanonicalName());
-        return types;
-    }
-
-    @Override
-    public boolean process(Set<? extends TypeElement> elements, RoundEnvironment env) {
-
-        Map<String, String> onCompleteMethods = new HashMap<>();
-        for (Element element : env.getElementsAnnotatedWith(JsonOnComplete.class)) {
-            if (!SuperficialValidation.validateElement(element)) continue;
-            if (isInaccessibleViaGeneratedCode(JsonOnComplete.class, element)) continue;
-
-            TypeElement enclosingElement = (TypeElement) element.getEnclosingElement();
-            String componentPackage = getPackageName(enclosingElement);
-            String className = getClassName(enclosingElement, componentPackage);
-
-            if (onCompleteMethods.containsKey(className)) {
-                error("Multiple %s annotations are not allowed, found in %s", JsonOnComplete.class.getSimpleName(),
-                        className);
-            } else {
-                String methodName = element.getSimpleName().toString();
-                onCompleteMethods.put(className, methodName);
-            }
-        }
-
-        Map<TypeElement, EpoxyJsonBinding> targetClassMap = new HashMap<>();
-        for (Element element : env.getElementsAnnotatedWith(JsonField.class)) {
-            if (!SuperficialValidation.validateElement(element)) continue;
-            if (isInaccessibleViaGeneratedCode(JsonField.class, element)) continue;
-            if (!isValidType(JsonField.class, element)) continue;
-
-            TypeElement enclosingElement = (TypeElement) element.getEnclosingElement();
-            String componentPackage = getPackageName(enclosingElement);
-            String className = getClassName(enclosingElement, componentPackage);
-
-            EpoxyJsonBinding binding = targetClassMap.get(enclosingElement);
-            if (binding == null) {
-                binding = new EpoxyJsonBinding(componentPackage, className);
-                targetClassMap.put(enclosingElement, binding);
-
-                if (onCompleteMethods.containsKey(className)) {
-                    binding.setOnCompleteMethod(onCompleteMethods.get(className));
-                }
-            }
-            binding.addElement(element);
-        }
-
-        if (targetClassMap.isEmpty()) {
-            // Nothing to do
+    public boolean process(@NonNull Set<? extends TypeElement> annotations, @NonNull RoundEnvironment env) {
+        if (env.processingOver()) {
             return true;
         }
 
-        for (Map.Entry<TypeElement, EpoxyJsonBinding> entry : targetClassMap.entrySet()) {
-            TypeElement parentType = findParentType(entry.getKey(), targetClassMap.keySet());
-            if (parentType != null) {
-                EpoxyJsonBinding bindingClass = entry.getValue();
-                EpoxyJsonBinding parentBindingClass = targetClassMap.get(parentType);
-                bindingClass.setParentBinding(parentBindingClass);
-            }
-        }
-
-        TypeSpec.Builder builder = TypeSpec.classBuilder(EPOXY_JSON)
-                .addModifiers(PUBLIC, FINAL);
-
-        // Binder map field
-        TypeName binderMapType = ParameterizedTypeName.get(ClassName.get(Map.class), ClassName.get(Class.class), EPOXY_JSON_BINDER);
-        builder.addField(FieldSpec.builder(binderMapType, BINDER_MAP, PRIVATE, STATIC, FINAL)
-                .initializer("new $T<>()", HashMap.class)
-                .build());
-
-        CodeBlock.Builder initialiser = CodeBlock.builder();
-
-        for (EpoxyJsonBinding binding : targetClassMap.values()) {
-            try {
-                initialiser.addStatement("$L.$L($T.class, new $T())", BINDER_MAP, PUT, binding.getObjectClassName(),
-                        binding.getBindingClassName());
-                brewJava(binding).writeTo(mFiler);
-            } catch (IOException e) {
-                error("Failed to write binding: %s", binding);
-                e.printStackTrace();
-            }
-        }
-
-        builder.addStaticBlock(initialiser.build());
-
-        // Get binder method
-        builder.addMethod(MethodSpec.methodBuilder(GET_BINDER)
-                .addAnnotation(NULLABLE)
-                .addModifiers(PRIVATE, STATIC)
-                .addTypeVariable(T)
-                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
-                        .addAnnotation(NONNULL).build())
-                .addStatement("//noinspection unchecked")
-                .addStatement("return $L.$L($L)", BINDER_MAP, GET, TYPE_CLASS)
-                .returns(ParameterizedTypeName.get(EPOXY_JSON_BINDER, T))
-                .build());
-
-        // From JSON String method
-        builder.addMethod(MethodSpec.methodBuilder(FROM_JSON)
-                .addAnnotation(NULLABLE)
-                .addModifiers(PUBLIC, STATIC)
-                .addTypeVariable(T)
-                .addException(IOException.class)
-                .addException(JSON_EXCEPTION_CLASS)
-                .addParameter(ParameterSpec.builder(String.class, JSON).addAnnotation(NULLABLE).build())
-                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
-                        .addAnnotation(NONNULL).build())
-                .addStatement("if ($L == null) return null", JSON)
-                .addStatement("$T $L = new $T($L)", JSON_OBJECT_CLASS, JSON_OBJECT, JSON_OBJECT_CLASS, JSON)
-                .addStatement("return $L($L, $L)", FROM_JSON, JSON_OBJECT, TYPE_CLASS)
-                .returns(T)
-                .build());
-
-        // From JSONObject method
-        builder.addMethod(MethodSpec.methodBuilder(FROM_JSON)
-                .addAnnotation(NULLABLE)
-                .addModifiers(PUBLIC, STATIC)
-                .addTypeVariable(T)
-                .addException(IOException.class)
-                .addException(JSON_EXCEPTION_CLASS)
-                .addParameter(ParameterSpec.builder(JSON_OBJECT_CLASS, JSON_OBJECT).addAnnotation(NULLABLE).build())
-                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
-                        .addAnnotation(NONNULL).build())
-                .addStatement("if ($L == null) return null", JSON_OBJECT)
-                .addStatement("$T $L = $L($L)", ParameterizedTypeName.get(EPOXY_JSON_BINDER, T), BINDER, GET_BINDER, TYPE_CLASS)
-                .beginControlFlow("if ($L == null)", BINDER)
-                .addStatement("throw new $T(\"Binder not found for type \" + $L)", JSON_EXCEPTION_CLASS, TYPE_CLASS)
-                .endControlFlow()
-                .addStatement("return $L.$L($L)", BINDER, FROM_JSON, JSON_OBJECT)
-                .returns(T)
-                .build());
-
-        // To JSONObject method
-        builder.addMethod(MethodSpec.methodBuilder(TO_JSON)
-                .addAnnotation(NULLABLE)
-                .addModifiers(PUBLIC, STATIC)
-                .addTypeVariable(T)
-                .addException(IOException.class)
-                .addException(JSON_EXCEPTION_CLASS)
-                .addParameter(ParameterSpec.builder(T, MODEL).addAnnotation(NULLABLE).build())
-                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
-                        .addAnnotation(NONNULL).build())
-                .addStatement("if ($L == null) return null", MODEL)
-                .addStatement("$T $L = $L($L)", ParameterizedTypeName.get(EPOXY_JSON_BINDER, T), BINDER, GET_BINDER, TYPE_CLASS)
-                .beginControlFlow("if ($L == null)", BINDER)
-                .addStatement("throw new $T(\"Binder not found for type \" + $L)", JSON_EXCEPTION_CLASS, TYPE_CLASS)
-                .endControlFlow()
-                .addStatement("return $L.$L($L)", BINDER, TO_JSON, MODEL)
-                .returns(JSON_OBJECT_CLASS)
-                .build());
-
-        // From JSONArray method
-        builder.addMethod(MethodSpec.methodBuilder(FROM_JSON)
-                .addAnnotation(NULLABLE)
-                .addModifiers(PUBLIC, STATIC)
-                .addTypeVariable(T)
-                .addException(IOException.class)
-                .addException(JSON_EXCEPTION_CLASS)
-                .addParameter(ParameterSpec.builder(JSON_ARRAY_CLASS, JSON_ARRAY).addAnnotation(NULLABLE).build())
-                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
-                        .addAnnotation(NONNULL).build())
-                .addStatement("if ($L == null) return null", JSON_ARRAY)
-                .addStatement("$T $L = $L($L)", ParameterizedTypeName.get(EPOXY_JSON_BINDER, T), BINDER, GET_BINDER, TYPE_CLASS)
-                .beginControlFlow("if ($L == null)", BINDER)
-                .addStatement("throw new $T(\"Binder not found for type \" + $L)", JSON_EXCEPTION_CLASS, TYPE_CLASS)
-                .endControlFlow()
-                .addStatement("int $L = $L.$L()", LENGTH, JSON_ARRAY, LENGTH)
-                .addStatement("$T[] $L =  ($T[]) $T.$L($L, $L)", T, ARRAY, T, Array.class, NEW_INSTANCE, TYPE_CLASS, LENGTH)
-                .beginControlFlow("for (int i = 0; i < $L; i++)", LENGTH)
-                .addStatement("$L[i] = $L.$L($L.$L(i))", ARRAY, BINDER, FROM_JSON, JSON_ARRAY, GET_JSON_OBJECT)
-                .endControlFlow()
-                .addStatement("return $L", ARRAY)
-                .returns(ArrayTypeName.of(T))
-                .build());
-
-        // To JSONArray method
-        builder.addMethod(MethodSpec.methodBuilder(TO_JSON)
-                .addAnnotation(NULLABLE)
-                .addModifiers(PUBLIC, STATIC)
-                .addTypeVariable(T)
-                .addException(IOException.class)
-                .addException(JSON_EXCEPTION_CLASS)
-                .addParameter(ParameterSpec.builder(ArrayTypeName.of(T), MODEL).addAnnotation(NULLABLE).build())
-                .addParameter(ParameterSpec.builder(ParameterizedTypeName.get(ClassName.get(Class.class), T), TYPE_CLASS)
-                        .addAnnotation(NONNULL).build())
-                .addStatement("if ($L == null) return null", MODEL)
-                .addStatement("$T $L = $L($L)", ParameterizedTypeName.get(EPOXY_JSON_BINDER, T), BINDER, GET_BINDER, TYPE_CLASS)
-                .beginControlFlow("if ($L == null)", BINDER)
-                .addStatement("throw new $T(\"Binder not found for type \" + $L)", JSON_EXCEPTION_CLASS, TYPE_CLASS)
-                .endControlFlow()
-                .addStatement("$T $L = new $T()", JSON_ARRAY_CLASS, JSON_ARRAY, JSON_ARRAY_CLASS)
-                .beginControlFlow("for ($T t : $L)", T, MODEL)
-                .addStatement("$L.$L($L.$L(t))", JSON_ARRAY, PUT, BINDER, TO_JSON)
-                .endControlFlow()
-                .addStatement("return $L", JSON_ARRAY)
-                .returns(JSON_ARRAY_CLASS)
-                .build());
-
-        // TODO: List support
-
         try {
-            JavaFile.builder(EPOXY_JSON.packageName(), builder.build())
-                    .indent("    ")
-                    .addFileComment(COMMENT)
-                    .build().writeTo(mFiler);
+            final Map<Element, List<Element>> bindings = collectBindings(env);
+
+            for (Map.Entry<Element, List<Element>> entry : bindings.entrySet()) {
+                String packageName = getPackageName(entry.getKey());
+                writeToFile(packageName, createBinder(entry.getKey(), entry.getValue()));
+            }
+        } catch (EpoxyException e) {
+            error(e.getMessage());
+            return true;
+        }
+
+        return false;
+    }
+
+    @NonNull
+    private TypeSpec createBinder(@NonNull Element hostType, @NonNull List<Element> elements) throws EpoxyException {
+        // Class type
+        String className = getClassName(hostType);
+        NameAllocator nameAllocator = new NameAllocator();
+
+        ParameterizedTypeName parameterizedTypeName = ParameterizedTypeName.get(ClassName.get(JsonAdapter.class),
+                TypeName.get(hostType.asType()));
+
+        // Class builder
+        TypeSpec.Builder typeSpecBuilder = TypeSpec.classBuilder(className + JsonAdapter.CLASS_SUFFIX)
+                .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
+                .superclass(parameterizedTypeName);
+
+        // Create restoreInstance method
+        MethodSpec fromMethod = MethodSpec.methodBuilder(FROM_JSON)
+                .addModifiers(Modifier.PUBLIC)
+                .addAnnotation(Override.class)
+                .addParameter(ParameterSpec.builder(Epoxy.class, EPOXY).addAnnotation(NonNull.class).build())
+                .addParameter(ParameterSpec.builder(JsonReader.class, JSON_READER).addAnnotation(NonNull.class).build())
+                .addCode(createFromJsonMethod(typeSpecBuilder, nameAllocator, hostType, elements))
+                .addException(IOException.class)
+                .returns(TypeName.get(hostType.asType()))
+                .build();
+
+        // Create restoreInstance method
+        MethodSpec toMethod = MethodSpec.methodBuilder(TO_JSON)
+                .addModifiers(Modifier.PUBLIC)
+                .addAnnotation(Override.class)
+                .addParameter(ParameterSpec.builder(Epoxy.class, EPOXY).addAnnotation(NonNull.class).build())
+                .addParameter(ParameterSpec.builder(JsonWriter.class, JSON_WRITER).addAnnotation(NonNull.class).build())
+                .addParameter(ParameterSpec.builder(TypeName.get(hostType.asType()), OBJECT).addAnnotation(Nullable.class).build())
+                .addCode(createToJsonMethod(typeSpecBuilder, nameAllocator, elements))
+                .addException(IOException.class)
+                .build();
+
+        return typeSpecBuilder.addMethod(fromMethod).addMethod(toMethod).build();
+    }
+
+    @NonNull
+    private CodeBlock createToJsonMethod(@NonNull TypeSpec.Builder typeBuilder,
+                                         @NonNull NameAllocator nameAllocator,
+                                         @NonNull List<Element> elements) throws EpoxyException {
+        CodeBlock.Builder builder = CodeBlock.builder()
+                .beginControlFlow("if ($N == null)", OBJECT)
+                .add("$N.nullValue();\n", JSON_WRITER)
+                .add("return;\n")
+                .endControlFlow()
+                .add("$N.beginObject();\n", JSON_WRITER);
+
+        for (Element element : elements) {
+            addEpoxyStatement(typeBuilder, builder, nameAllocator, element, true);
+        }
+
+        return builder.add("$N.endObject();\n", JSON_WRITER).build();
+    }
+
+    @NonNull
+    private CodeBlock createFromJsonMethod(@NonNull TypeSpec.Builder typeBuilder,
+                                           @NonNull NameAllocator nameAllocator,
+                                           @NonNull Element hostType,
+                                           @NonNull List<Element> elements) throws EpoxyException {
+        CodeBlock.Builder builder = CodeBlock.builder()
+                .add("$T $N = new $T();\n", hostType, OBJECT, hostType)
+                .add("$N.beginObject();\n", JSON_READER)
+                .beginControlFlow("while ($N.hasNext())", JSON_READER)
+                .add("$T $N = $N.nextName();\n", String.class, NAME, JSON_READER)
+                .beginControlFlow("if ($N.peek() == $T.NULL)", JSON_READER, JsonToken.class)
+                // TODO: Do we actually want to do this?
+                .add("$N.skipValue();\n", JSON_READER)
+                .add("continue;\n")
+                .endControlFlow()
+                .beginControlFlow("switch ($N)", NAME);
+
+        for (Element element : elements) {
+            addEpoxyStatement(typeBuilder, builder, nameAllocator, element, false);
+        }
+
+        builder.beginControlFlow("default:")
+                .add("$N.skipValue();\n", JSON_READER)
+                .endControlFlow()
+                .endControlFlow()
+                .endControlFlow()
+                .add("$N.endObject();\n", JSON_READER)
+                .add("return $N;\n", OBJECT);
+
+        return builder.build();
+    }
+
+    private void addEpoxyStatement(@NonNull TypeSpec.Builder typeBuilder,
+                                   @NonNull CodeBlock.Builder codeBuilder,
+                                   @NonNull NameAllocator nameAllocator,
+                                   @NonNull Element element,
+                                   boolean writer) throws EpoxyException {
+        JsonField jsonField = element.getAnnotation(JsonField.class);
+        if (writer) {
+            codeBuilder.add("$N.name($S);\n", JSON_WRITER, jsonField.value());
+        } else {
+            codeBuilder.beginControlFlow("case $S:", jsonField.value());
+        }
+
+        String erasedName = erasedType(element.asType());
+
+        if (List.class.getCanonicalName().equals(erasedName)) {
+            DeclaredType declaredType = (DeclaredType) element.asType();
+            List<? extends TypeMirror> typeArguments = declaredType.getTypeArguments();
+            if (typeArguments.size() != 1) {
+                throw new EpoxyException("Argument type not specified for list: " + element);
+            }
+            TypeMirror elementType = typeArguments.get(0);
+
+            String typeField = "LIST_" + getClassName(asElement(elementType)).toUpperCase(US) + "_TYPE";
+            try {
+                nameAllocator.get(typeField);
+            } catch (Exception e) {
+                // Doesn't exist, add the field
+                nameAllocator.newName(typeField, typeField);
+                typeBuilder.addField(FieldSpec.builder(ParameterizedType.class, typeField)
+                        .initializer("$T.newParameterizedType($T.class, $T.class)", Types.class, List.class,
+                                elementType).addModifiers(Modifier.FINAL, Modifier.PRIVATE).build());
+            }
+
+            if (writer) {
+                codeBuilder.add("$N.toJson($N, $N.$N, $N);\n", EPOXY, JSON_WRITER, OBJECT, element.getSimpleName(), typeField);
+            } else {
+                codeBuilder.add("$N.$N = $N.fromJson($N, $N);\n", OBJECT, element.getSimpleName(), EPOXY, JSON_READER, typeField);
+            }
+        } else if (Map.class.getCanonicalName().equals(erasedName)) {
+            DeclaredType declaredType = (DeclaredType) element.asType();
+            List<? extends TypeMirror> typeArguments = declaredType.getTypeArguments();
+            if (typeArguments.size() != 2) {
+                throw new EpoxyException("Invalid arguments specified for map: " + element);
+            }
+
+            TypeMirror keyType = typeArguments.get(0);
+            if (!isAssignable(keyType, String.class)) {
+                throw new EpoxyException("Map requires string key types, found " + keyType + ": " + element);
+            }
+
+            TypeMirror valueType = typeArguments.get(1);
+            String typeField = "MAP_" + getClassName(asElement(keyType)).toUpperCase(US) + "_" +
+                    getClassName(asElement(valueType)).toUpperCase(US) + "_TYPE";
+            try {
+                nameAllocator.get(typeField);
+            } catch (Exception e) {
+                // Doesn't exist, add the field
+                nameAllocator.newName(typeField, typeField);
+                typeBuilder.addField(FieldSpec.builder(ParameterizedType.class, typeField)
+                        .initializer("$T.newParameterizedType($T.class, $T.class, $T.class)", Types.class, Map.class,
+                                String.class, valueType).addModifiers(Modifier.FINAL, Modifier.PRIVATE).build());
+            }
+
+            if (writer) {
+                codeBuilder.add("$N.toJson($N, $N.$N, $N);\n", EPOXY, JSON_WRITER, OBJECT, element.getSimpleName(), typeField);
+            } else {
+                codeBuilder.add("$N.$N = $N.fromJson($N, $N);\n", OBJECT, element.getSimpleName(), EPOXY, JSON_READER, typeField);
+            }
+        } else {
+            if (writer) {
+                codeBuilder.add("$N.toJson($N, $N.$N, $T.class);\n", EPOXY, JSON_WRITER, OBJECT, element.getSimpleName(), element.asType());
+            } else {
+                codeBuilder.add("$N.$N = $N.fromJson($N, $T.class);\n", OBJECT, element.getSimpleName(), EPOXY, JSON_READER, element.asType());
+            }
+        }
+
+        if (!writer) {
+            codeBuilder.add("break;\n").endControlFlow();
+        }
+    }
+
+    private Map<Element, List<Element>> collectBindings(@NonNull RoundEnvironment env) throws EpoxyException {
+        Map<Element, List<Element>> bindings = new HashMap<>();
+        for (Element e : env.getElementsAnnotatedWith(JsonField.class)) {
+            if (e.getKind() != ElementKind.FIELD) {
+                throw new EpoxyException(e.getSimpleName() + " is annotated with @" + JsonField.class.getName() +
+                        " but is not a field");
+            }
+
+            if (isPrivate(e)) {
+                throw new EpoxyException("Field must not be private: " + e.getSimpleName());
+            } else if (isStatic(e)) {
+                throw new EpoxyException("Field must not be static: " + e.getSimpleName());
+            }
+
+            final Element type = findEnclosingElement(e);
+            // class should exist
+            if (type == null) {
+                throw new EpoxyException("Could not find a class for " + e.getSimpleName());
+            }
+            // and it should be public
+            if (isPrivate(type)) {
+                throw new EpoxyException("Class is private: " + type);
+            }
+            // as well as all parent classes
+            Element parentType = findEnclosingElement(type);
+            while (parentType != null) {
+                if (isPrivate(parentType)) {
+                    throw new EpoxyException("Parent class is private: " + parentType);
+                }
+                parentType = findEnclosingElement(parentType);
+            }
+
+            List<Element> elements = bindings.get(type);
+            if (elements == null) {
+                elements = new ArrayList<>();
+                bindings.put(type, elements);
+            }
+
+            elements.add(e);
+        }
+
+        return bindings;
+    }
+
+    @NonNull
+    private JavaFile writeToFile(@NonNull String packageName, @NonNull TypeSpec spec) throws EpoxyException {
+        final JavaFile file = JavaFile.builder(packageName, spec)
+                .addFileComment("Generated by EpoxyProcessor, do not edit manually!")
+                .indent("    ").build();
+        try {
+            file.writeTo(mFiler);
         } catch (IOException e) {
-            error("Failed to write Epoxy class");
-            e.printStackTrace();
+            throw new EpoxyException(e);
         }
-
-        return true;
-    }
-
-    @Nonnull
-    private String getPackageName(@Nonnull TypeElement type) {
-        return mElementUtils.getPackageOf(type).getQualifiedName().toString();
-    }
-
-    @Nonnull
-    private String getClassName(@Nonnull TypeElement type, @Nonnull String packageName) {
-        int packageLen = packageName.length() + 1;
-        return type.getQualifiedName().toString().substring(packageLen).replace('.', '$');
-    }
-
-    @Nonnull
-    private JavaFile brewJava(@Nonnull EpoxyJsonBinding binding) {
-        TypeSpec.Builder builder = TypeSpec.classBuilder(binding.getBindingClassName())
-                .addModifiers(PUBLIC)
-                .addTypeVariable(TypeVariableName.get("T", binding.getObjectClassName()))
-                .superclass(binding.getSuperClassName());
-
-        builder.addMethod(binding.createFromJsonMethod())
-                .addMethod(binding.createParseJsonMethod())
-                .addMethod(binding.createToJsonMethod())
-                .addMethod(binding.createParseModelMethod());
-
-        return JavaFile.builder(binding.packageName, builder.build())
-                .indent("    ")
-                .addFileComment(COMMENT).build();
-    }
-
-    private boolean isValidType(@Nonnull Class<? extends Annotation> annotationClass,
-                                @Nonnull Element element) {
-        boolean isValid = true;
-        TypeElement enclosingElement = (TypeElement) element.getEnclosingElement();
-
-        TypeKind elementKind = element.asType().getKind();
-        switch (elementKind) {
-            case BYTE:
-            case CHAR:
-                error(element, "@%s fields must be a valid JSON type, found %s. (%s.%s)",
-                        annotationClass.getSimpleName(), elementKind, enclosingElement.getQualifiedName(),
-                        element.getSimpleName());
-                isValid = false;
-        }
-
-        return isValid;
-    }
-
-    private boolean isInaccessibleViaGeneratedCode(@Nonnull Class<? extends Annotation> annotationClass,
-                                                   @Nonnull Element element) {
-        boolean hasError = false;
-        TypeElement enclosingElement = (TypeElement) element.getEnclosingElement();
-
-        // Verify method modifiers.
-        Set<Modifier> modifiers = element.getModifiers();
-        if (modifiers.contains(STATIC) || modifiers.contains(PRIVATE)) {
-            error(element, "@%s fields must not be private or static. (%s.%s)",
-                    annotationClass.getSimpleName(), enclosingElement.getQualifiedName(),
-                    element.getSimpleName());
-            hasError = true;
-        }
-
-        // Verify containing type.
-        if (enclosingElement.getKind() != CLASS) {
-            error(enclosingElement, "@%s fields may only be contained in classes. (%s.%s)",
-                    annotationClass.getSimpleName(), enclosingElement.getQualifiedName(),
-                    element.getSimpleName());
-            hasError = true;
-        }
-
-        // Verify containing class visibility is not private.
-        if (enclosingElement.getModifiers().contains(PRIVATE)) {
-            error(enclosingElement, "@%s fields may not be contained in private classes. (%s.%s)",
-                    annotationClass.getSimpleName(), enclosingElement.getQualifiedName(),
-                    element.getSimpleName());
-            hasError = true;
-        }
-
-        return hasError;
-    }
-
-    private TypeElement findParentType(TypeElement typeElement, Set<TypeElement> parents) {
-        TypeMirror type;
-        while (true) {
-            type = typeElement.getSuperclass();
-            if (type.getKind() == TypeKind.NONE) {
-                return null;
-            }
-            typeElement = (TypeElement) ((DeclaredType) type).asElement();
-            if (parents.contains(typeElement)) {
-                return typeElement;
-            }
-        }
-    }
-
-    private void error(@Nonnull String message, @Nullable Object... args) {
-        if (args != null && args.length > 0) {
-            message = String.format(message, args);
-        }
-        processingEnv.getMessager().printMessage(ERROR, message);
-    }
-
-    private void error(@Nonnull Element element, @Nonnull String message, @Nullable Object... args) {
-        if (args != null && args.length > 0) {
-            message = String.format(message, args);
-        }
-        processingEnv.getMessager().printMessage(ERROR, message, element);
+        return file;
     }
 }

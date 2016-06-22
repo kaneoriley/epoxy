@@ -1,25 +1,22 @@
-apply plugin: 'com.android.library'
-apply plugin: 'com.github.dcendents.android-maven'
-apply plugin: 'com.neenbedankt.android-apt'
+import com.android.build.gradle.internal.LoggerWrapper
+import com.android.build.gradle.internal.SdkHandler
 
-android {
-    compileSdkVersion 23
-    buildToolsVersion '23.0.3'
+apply plugin: 'java'
+apply plugin: 'nexus'
 
-    defaultConfig {
-        minSdkVersion 15
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_7
-        targetCompatibility JavaVersion.VERSION_1_7
-    }
-
-    lintOptions {
-        abortOnError false
+def logger = new LoggerWrapper(project.logger)
+def sdkHandler = new SdkHandler(project, logger)
+for (File file : sdkHandler.sdkLoader.repositories) {
+    project.repositories.maven {
+        url = file.toURI()
     }
 }
 
+sourceCompatibility = JavaVersion.VERSION_1_7
+targetCompatibility = JavaVersion.VERSION_1_7
+
 dependencies {
-    compile 'com.android.support:support-annotations:23.3.0'
+    //noinspection GradleDependency
+    compile 'com.android.support:support-annotations:23.4.0'
+    compileOnly 'com.google.android:android:4.1.1.4'
 }
