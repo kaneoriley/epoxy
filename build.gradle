@@ -21,6 +21,6 @@ allprojects {
         mavenLocal()
     }
 
-    group = 'me.oriley.epoxy'
+    group = 'com.github.oriley-me.epoxy'
     version = 'LOCAL-SNAPSHOT'
 }
